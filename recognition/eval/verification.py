@@ -70,11 +70,12 @@ def calculate_roc(thresholds, embeddings1, embeddings2, actual_issame, nrof_fold
     fprs = np.zeros((nrof_folds,nrof_thresholds))
     accuracy = np.zeros((nrof_folds))
     indices = np.arange(nrof_pairs)
+    #print('pca', pca)
     
     if pca==0:
       diff = np.subtract(embeddings1, embeddings2)
-      dist = np.sum(np.square(diff),1)
-      dist_l2 = np.sqrt(dist)
+      dist = np.sum(np.square(diff),1) # 1.3
+      dist_l2 = np.sqrt(dist) # 1.1622074139508407
 
       # cos = np.einsum('ij,ij->i', embeddings1, embeddings2)
       cos = np.empty((embeddings1.shape[0]))
@@ -88,11 +89,14 @@ def calculate_roc(thresholds, embeddings1, embeddings2, actual_issame, nrof_fold
       df.to_csv(angles_file, index = False, header = False)
     
     for fold_idx, (train_set, test_set) in enumerate(k_fold.split(indices)):
+        #print('train_set', train_set)
+        #print('test_set', test_set)
         if pca>0:
           print('doing pca on', fold_idx)
           embed1_train = embeddings1[train_set]
           embed2_train = embeddings2[train_set]
           _embed_train = np.concatenate( (embed1_train, embed2_train), axis=0 )
+          #print(_embed_train.shape)
           pca_model = PCA(n_components=pca)
           pca_model.fit(_embed_train)
           embed1 = pca_model.transform(embeddings1)
@@ -170,8 +174,6 @@ def calculate_val_far(threshold, dist, actual_issame):
     false_accept = np.sum(np.logical_and(predict_issame, np.logical_not(actual_issame)))
     n_same = np.sum(actual_issame)
     n_diff = np.sum(np.logical_not(actual_issame))
-    #print(true_accept, false_accept)
-    #print(n_same, n_diff)
     val = float(true_accept) / float(n_same)
     far = float(false_accept) / float(n_diff)
     return val, far
@@ -285,27 +287,29 @@ def test(data_set, mx_model, batch_size, nfolds=10, data_extra = None, label_sha
   #embeddings = np.concatenate(embeddings_list, axis=1)
   embeddings = embeddings_list[0] + embeddings_list[1]
   embeddings = sklearn.preprocessing.normalize(embeddings)
+  print(embeddings.shape)
   print('infer time', time_consumed)
   _, _, accuracy, val, val_std, far = evaluate(embeddings, issame_list, nrof_folds=nfolds)
   acc2, std2 = np.mean(accuracy), np.std(accuracy)
   return acc1, std1, acc2, std2, _xnorm, embeddings_list
 
 def get_threshold():
-  df = pd.read_csv(angles_file,header=None)  
-  data = []
+    df = pd.read_csv(angles_file,header=None)  
+    data = []
 
-  for index, row in df.iterrows():
-    dist = float(row[0])
-    dist_l2 = float(row[1])
+    # for line in lines:
+    for index, row in df.iterrows():
+        dist = float(row[0])
+        dist_l2 = float(row[1])
+        cos = float(row[2])
 
-    cos = float(row[2])
-    theta = math.acos(cos)
-    angle = theta * 180 / math.pi
+        theta = math.acos(cos)
+        angle = theta * 180 / math.pi
 
-    type = int(row[3])
-    data.append({'angle': angle, 'type': type})
+        type = int(row[3])
+        data.append({'angle': angle, 'type': type})
 
-    min_error = 6000 #7000 for cfp_ff, 6000 for lfw
+    min_error = 6000 # 7000 for cfp_ff
     min_threshold = 0
 
     for d in data:
@@ -317,7 +321,7 @@ def get_threshold():
             min_error = num_errors
             min_threshold = threshold
 
-    # print(min_error, min_threshold)
+    print(min_error, min_threshold)
     return min_threshold
 
 def test_badcase(data_set, mx_model, batch_size, name='', data_extra = None, label_shape = None):
@@ -541,7 +545,7 @@ def dumpR(data_set, mx_model, batch_size, name='', data_extra = None, label_shap
   with open(outname, 'wb') as f:
     pickle.dump((embeddings, issame_list), f, protocol=pickle.HIGHEST_PROTOCOL)
 
-# CUDA_VISIBLE_DEVICES='0' python verification.py --data-dir ../../datasets/faces_vgg_112x112
+# CUDA_VISIBLE_DEVICES='0' python verification.py --data-dir /opt/Work/netki/experiments/insightface/datasets/faces_vgg_112x112
 if __name__ == '__main__':
 
   parser = argparse.ArgumentParser(description='do verification')
@@ -618,13 +622,12 @@ if __name__ == '__main__':
       for model in nets:
         acc1, std1, acc2, std2, xnorm, embeddings_list = test(ver_list[i], model, args.batch_size, args.nfolds)
         print('Calculating threshold...')
-        # lfw cos thres:  42.58324065809831 (degrees)
-        # lfw dist thres:  0.5274099085922199
-        # lwf dist_l2 thres: 0.7262299281854335
+        
+        # lfw dataset best threshold:  71.0564180119977 (degrees) => if cos > 0.325 same person
+        # cfp: 75.88399997316162, 0.245 
 
-        # cff_ff thres:  60.83149096235069 60.83149096235069
-        # cfp_ff dist thres: 1.0252403816194633
-        # cfp_ff dist_l2 thres: 1.0125413853582883
+        # lfw threshold for dist:  1.1622074139508407 => if dist < 1.16 same person
+        # cfp: 1.2297269273315838
         thres = get_threshold()
         print('thres: ', thres)
         print('[%s]XNorm: %f' % (ver_name_list[i], xnorm))
